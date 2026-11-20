@@ -5,9 +5,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ATP Mobile QR Scanner</title>
+
   <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://accounts.google.com/gsi/client"></script>
+
   <style>
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       padding: 20px;
@@ -16,14 +20,17 @@
       font-family: Arial, sans-serif;
       text-align: center;
     }
+
     .logo {
       font-size: 34px;
       font-weight: 900;
       color: #ff4fa3;
       margin-top: 15px;
     }
+
     .green { color: #a8ff38; }
     .subtitle { color: #bbb; margin-bottom: 25px; }
+
     .panel {
       background: #202027;
       border-radius: 16px;
@@ -31,117 +38,369 @@
       margin: 15px auto;
       max-width: 500px;
     }
+
     #reader {
       width: 100%;
       overflow: hidden;
       border-radius: 12px;
     }
-    input, button {
+
+    input, button, select {
       width: 100%;
       padding: 14px;
       margin-top: 12px;
       border-radius: 10px;
       font-size: 16px;
     }
-    input {
+
+    input, select {
       background: #303039;
       color: white;
       border: 1px solid #555;
     }
+
     button {
       border: none;
       font-weight: bold;
       cursor: pointer;
     }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
     .start { background: #a8ff38; color: #111; }
     .stop { background: #ff4fa3; color: white; }
+    .login { background: #fff; color: #222; }
+
     .result {
       color: #a8ff38;
       font-size: 20px;
       font-weight: bold;
       overflow-wrap: anywhere;
     }
+
     .note { color: #aaa; font-size: 13px; }
+    .status { color: #a8ff38; font-weight: bold; }
   </style>
 </head>
+
 <body>
 
   <div class="logo">ATP <span class="green">PICKLEBALL</span></div>
   <div class="subtitle">AIM • THRIVE • PLAY</div>
 
   <div class="panel">
-    <h2>MEMBERSHIP SCANNER</h2>
+    <h2>ATP MEMBERSHIP SCANNER</h2>
+    <p class="note">Authorized staff attendance system</p>
+
+    <button class="login" id="loginBtn" onclick="googleLogin()">
+      SIGN IN WITH GOOGLE
+    </button>
+
+    <p id="loginStatus" class="note">Not signed in</p>
+  </div>
+
+  <div class="panel">
+    <h3>SELECT EVENT</h3>
+
+    <select id="eventSelect" disabled>
+      <option value="">Sign in to load events</option>
+    </select>
+
+    <button class="start" onclick="loadEvents()" id="refreshBtn" disabled>
+      REFRESH EVENTS
+    </button>
+  </div>
+
+  <div class="panel">
+    <h2>QR SCANNER</h2>
     <p class="note">Scan the player's ATP Membership QR Code</p>
 
     <div id="reader"></div>
 
-    <button class="start" onclick="startScanner()">START CAMERA</button>
-    <button class="stop" onclick="stopScanner()">STOP CAMERA</button>
+    <button class="start" onclick="startScanner()" id="startBtn" disabled>
+      START CAMERA
+    </button>
+
+    <button class="stop" onclick="stopScanner()">
+      STOP CAMERA
+    </button>
   </div>
 
   <div class="panel">
     <h3>MANUAL MEMBER ID</h3>
+
     <input id="manualID" placeholder="Example: ATP-0001">
-    <button class="start" onclick="manualScan()">SUBMIT MEMBER ID</button>
+
+    <button class="start" onclick="manualScan()" id="submitBtn" disabled>
+      CHECK IN MEMBER
+    </button>
   </div>
 
   <div class="panel">
     <h3>SCAN RESULT</h3>
+
     <div id="result" class="result">Waiting for scan...</div>
-    <p class="note" id="message">
-      Attendance connection will be added next.
+
+    <p id="message" class="note">
+      Sign in and select an active event to begin.
     </p>
   </div>
 
 <script>
+  const CLIENT_ID =
+    "990488317976-5vpsfgea2n685deedi423l5p43trcri1.apps.googleusercontent.com";
+
+  const API_URL =
+    "https://script.googleapis.com/v1/scripts/AKfycbzXHhOzBikjF2cs-kDJm2oweUdnIAB79jPzMJJNVwObzjQcYFkZcEyBMiTlDrI8rVGm:run";
+
+  const SCOPES =
+    "https://www.googleapis.com/auth/spreadsheets";
+
+  let accessToken = null;
+  let tokenClient = null;
   let scanner = null;
   let isRunning = false;
+  let isProcessing = false;
 
-  function showResult(memberID) {
-    document.getElementById("result").textContent = memberID;
-    document.getElementById("message").textContent =
-      "QR captured. Attendance connection is the next step.";
-    document.getElementById("manualID").value = memberID;
+  function setMessage(message) {
+    document.getElementById("message").textContent = message;
   }
 
-  function startScanner() {
+  function googleLogin() {
+    if (!window.google || !google.accounts) {
+      setMessage("Google login is not ready. Refresh the page.");
+      return;
+    }
+
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+
+      callback: async (response) => {
+        if (response.error) {
+          setMessage("Google authorization failed: " + response.error);
+          return;
+        }
+
+        accessToken = response.access_token;
+
+        document.getElementById("loginStatus").textContent =
+          "Google account authorized";
+
+        document.getElementById("eventSelect").disabled = false;
+        document.getElementById("refreshBtn").disabled = false;
+        document.getElementById("startBtn").disabled = false;
+        document.getElementById("submitBtn").disabled = false;
+
+        document.getElementById("loginBtn").textContent =
+          "GOOGLE ACCOUNT CONNECTED";
+
+        setMessage("Login successful. Loading active events...");
+
+        await loadEvents();
+      }
+    });
+
+    tokenClient.requestAccessToken();
+  }
+
+  async function apiCall(functionName, parameters = []) {
+    if (!accessToken) {
+      throw new Error("Please sign in with Google first.");
+    }
+
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        function: functionName,
+        parameters: parameters,
+        devMode: false
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error?.message || "Google API request failed."
+      );
+    }
+
+    if (data.error) {
+      throw new Error(data.error.message || "Apps Script execution failed.");
+    }
+
+    if (!data.response) {
+      throw new Error("No response received from Apps Script.");
+    }
+
+    return data.response.result;
+  }
+
+  async function loadEvents() {
+    try {
+      setMessage("Loading active events...");
+
+      const events = await apiCall("getATPEvents");
+
+      const select = document.getElementById("eventSelect");
+
+      select.innerHTML = "";
+
+      if (!events || events.length === 0) {
+        select.innerHTML =
+          '<option value="">No active events available</option>';
+
+        setMessage("There are currently no active ATP events.");
+        return;
+      }
+
+      select.innerHTML =
+        '<option value="">-- SELECT ATP EVENT --</option>';
+
+      events.forEach(event => {
+        const option = document.createElement("option");
+
+        option.value = event.id;
+        option.textContent =
+          event.name + " | " + event.date +
+          (event.venue ? " | " + event.venue : "");
+
+        select.appendChild(option);
+      });
+
+      setMessage("Events loaded successfully. Select an event.");
+
+    } catch (error) {
+      setMessage("EVENT ERROR: " + error.message);
+    }
+  }
+
+  async function startScanner() {
+    if (!accessToken) {
+      setMessage("Please sign in first.");
+      return;
+    }
+
+    if (!document.getElementById("eventSelect").value) {
+      setMessage("Please select an active event first.");
+      return;
+    }
+
     if (isRunning) return;
 
     scanner = new Html5Qrcode("reader");
 
-    scanner.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 230, height: 230 } },
-      (decodedText) => {
-        showResult(decodedText);
-        stopScanner();
-      },
-      () => {}
-    ).then(() => {
-      isRunning = true;
-    }).catch((error) => {
-      document.getElementById("message").textContent =
-        "Camera error: " + error;
-    });
-  }
+    try {
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 230, height: 230 } },
 
-  function stopScanner() {
-    if (scanner && isRunning) {
-      scanner.stop().then(() => {
-        isRunning = false;
-      }).catch(() => {});
+        async (decodedText) => {
+          if (isProcessing) return;
+
+          isProcessing = true;
+
+          await stopScanner();
+
+          document.getElementById("manualID").value = decodedText;
+
+          await checkInMember(decodedText);
+        },
+
+        () => {}
+      );
+
+      isRunning = true;
+      setMessage("Camera ready. Scan an ATP Membership QR Code.");
+
+    } catch (error) {
+      setMessage("Camera error: " + error.message);
     }
   }
 
-  function manualScan() {
-    const memberID = document.getElementById("manualID").value.trim();
+  async function stopScanner() {
+    if (scanner && isRunning) {
+      try {
+        await scanner.stop();
+      } catch (error) {
+        console.log(error);
+      }
+
+      isRunning = false;
+    }
+  }
+
+  async function manualScan() {
+    const memberID =
+      document.getElementById("manualID").value.trim();
 
     if (!memberID) {
       alert("Please enter a Member ID.");
       return;
     }
 
-    showResult(memberID);
+    await checkInMember(memberID);
+  }
+
+  async function checkInMember(memberID) {
+    if (!accessToken) {
+      setMessage("Please sign in with Google first.");
+      isProcessing = false;
+      return;
+    }
+
+    const eventID =
+      document.getElementById("eventSelect").value;
+
+    if (!eventID) {
+      setMessage("Please select an active event.");
+      isProcessing = false;
+      return;
+    }
+
+    try {
+      document.getElementById("result").textContent = memberID;
+      setMessage("Processing attendance...");
+
+      document.getElementById("submitBtn").disabled = true;
+
+      const result = await apiCall(
+        "checkInATPMember",
+        [memberID, eventID]
+      );
+
+      document.getElementById("result").textContent =
+        "SUCCESS: " + result.playerName;
+
+      document.getElementById("result").style.color = "#a8ff38";
+
+      setMessage(
+        "Attendance recorded! +" +
+        result.awarded +
+        " POINTS | Total Points: " +
+        result.points +
+        " | Attendance: " +
+        result.attendance
+      );
+
+    } catch (error) {
+      document.getElementById("result").textContent = "CHECK-IN FAILED";
+      document.getElementById("result").style.color = "#ff4fa3";
+
+      setMessage(error.message);
+
+    } finally {
+      document.getElementById("submitBtn").disabled = !accessToken;
+      isProcessing = false;
+    }
   }
 </script>
 
