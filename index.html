@@ -1,0 +1,149 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATP Mobile QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #101014;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    .logo {
+      font-size: 34px;
+      font-weight: 900;
+      color: #ff4fa3;
+      margin-top: 15px;
+    }
+    .green { color: #a8ff38; }
+    .subtitle { color: #bbb; margin-bottom: 25px; }
+    .panel {
+      background: #202027;
+      border-radius: 16px;
+      padding: 18px;
+      margin: 15px auto;
+      max-width: 500px;
+    }
+    #reader {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+    input, button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+    input {
+      background: #303039;
+      color: white;
+      border: 1px solid #555;
+    }
+    button {
+      border: none;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .start { background: #a8ff38; color: #111; }
+    .stop { background: #ff4fa3; color: white; }
+    .result {
+      color: #a8ff38;
+      font-size: 20px;
+      font-weight: bold;
+      overflow-wrap: anywhere;
+    }
+    .note { color: #aaa; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+  <div class="logo">ATP <span class="green">PICKLEBALL</span></div>
+  <div class="subtitle">AIM • THRIVE • PLAY</div>
+
+  <div class="panel">
+    <h2>MEMBERSHIP SCANNER</h2>
+    <p class="note">Scan the player's ATP Membership QR Code</p>
+
+    <div id="reader"></div>
+
+    <button class="start" onclick="startScanner()">START CAMERA</button>
+    <button class="stop" onclick="stopScanner()">STOP CAMERA</button>
+  </div>
+
+  <div class="panel">
+    <h3>MANUAL MEMBER ID</h3>
+    <input id="manualID" placeholder="Example: ATP-0001">
+    <button class="start" onclick="manualScan()">SUBMIT MEMBER ID</button>
+  </div>
+
+  <div class="panel">
+    <h3>SCAN RESULT</h3>
+    <div id="result" class="result">Waiting for scan...</div>
+    <p class="note" id="message">
+      Attendance connection will be added next.
+    </p>
+  </div>
+
+<script>
+  let scanner = null;
+  let isRunning = false;
+
+  function showResult(memberID) {
+    document.getElementById("result").textContent = memberID;
+    document.getElementById("message").textContent =
+      "QR captured. Attendance connection is the next step.";
+    document.getElementById("manualID").value = memberID;
+  }
+
+  function startScanner() {
+    if (isRunning) return;
+
+    scanner = new Html5Qrcode("reader");
+
+    scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 230, height: 230 } },
+      (decodedText) => {
+        showResult(decodedText);
+        stopScanner();
+      },
+      () => {}
+    ).then(() => {
+      isRunning = true;
+    }).catch((error) => {
+      document.getElementById("message").textContent =
+        "Camera error: " + error;
+    });
+  }
+
+  function stopScanner() {
+    if (scanner && isRunning) {
+      scanner.stop().then(() => {
+        isRunning = false;
+      }).catch(() => {});
+    }
+  }
+
+  function manualScan() {
+    const memberID = document.getElementById("manualID").value.trim();
+
+    if (!memberID) {
+      alert("Please enter a Member ID.");
+      return;
+    }
+
+    showResult(memberID);
+  }
+</script>
+
+</body>
+</html>
